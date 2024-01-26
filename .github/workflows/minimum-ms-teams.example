@@ -1,0 +1,75 @@
+name: Playwright API Checks
+
+on: 
+  pull_request:
+
+jobs:
+  e2e-tests:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    env: 
+      SLACK_BOT_USER_OAUTH_TOKEN: ${{ secrets.SLACK_BOT_USER_OAUTH_TOKEN }}
+
+    steps: 
+      - uses: actions/checkout@v3
+
+      - name: Get installed Playwright version
+        id: playwright-version
+        run: echo "PLAYWRIGHT_VERSION=$(node -e "console.log(require('./package-lock.json').dependencies['@playwright/test'].version)")" >> $GITHUB_ENV
+    
+      - name: Cache playwright binaries
+        uses: actions/cache@v3
+        id: playwright-cache
+        with:
+          path: |
+            ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ env.PLAYWRIGHT_VERSION }}
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      - run: npx playwright install-deps
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+   
+      - name: Install Dependencies
+        run: npm ci
+      
+      - name: Run Playwright tests
+        run: npm run test
+      
+      - uses: actions/upload-artifact@v2
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+
+      - name: Read Summary Report to Get Test Results
+        if: always()
+        run: |
+          PASSED=$(jq -r '.passed | length' ./summary.json)
+          echo "PASSED=$PASSED" >> $GITHUB_ENV 
+          FAILURES=$(jq -r '.failed | length' ./summary.json)
+          echo "FAILURES=$FAILURES" >> $GITHUB_ENV 
+          LIST_PASSED=$(jq -r '.passed[]' ./summary.json | tr '\n' ' ')
+          echo "LIST_PASSED=$LIST_PASSED" >> $GITHUB_ENV 
+          LIST_FAILED=$(jq -r '.failed[]' ./summary.json | tr '\n' ' ')
+          echo "LIST_FAILED=$LIST_FAILED" >> $GITHUB_ENV 
+
+      - name: Notify MS Teams on Success
+        if: success()
+        uses: jdcargile/ms-teams-notification@v1.3
+        with:
+          github-token: ${{ github.token }} # this will use the runner's token.
+          ms-teams-webhook-uri: ${{ secrets.MSTEAMS_WEBHOOK }}
+          notification-summary: Results &#x2705; ${{ env.PASSED }} | &#x274C; ${{ env.FAILURES }}
+          notification-color: 28a745
+          timezone: America/Chicago
+
+      - name: Notify MS Teams on Failure
+        if: failure()
+        uses: jdcargile/ms-teams-notification@v1.3
+        with:
+          github-token: ${{ github.token }} 
+          ms-teams-webhook-uri: ${{ secrets.MSTEAMS_WEBHOOK }}
+          notification-summary: Results &#x2705; ${{ env.PASSED }} | &#x274C; ${{ env.FAILURES }}
+          notification-color: dc3545
+          timezone: America/Chicago
